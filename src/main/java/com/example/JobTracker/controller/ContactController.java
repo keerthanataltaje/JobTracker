@@ -1,6 +1,8 @@
 package com.example.JobTracker.controller;
 
 import com.example.JobTracker.domain.entity.Contact;
+import com.example.JobTracker.dto.ContactRequestDto;
+import com.example.JobTracker.dto.ContactResponseDto;
 import com.example.JobTracker.service.ContactService;
 import org.apache.coyote.Response;
 import org.springframework.http.HttpStatus;
@@ -20,7 +22,7 @@ public class ContactController {
     }
 
     @GetMapping
-    public ResponseEntity<List<Contact>> getContacts(@RequestParam(required = false) Long companyId) {
+    public ResponseEntity<List<ContactResponseDto>> getContacts(@RequestParam(required = false) Long companyId) {
         if (companyId != null) {
             return ResponseEntity.ok(contactService.getContactsByCompany(companyId));
         }
@@ -28,20 +30,19 @@ public class ContactController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Contact> getContactById(@PathVariable Long id) {
-        return ResponseEntity.ok(contactService.getContactById(id));
+    public ResponseEntity<ContactResponseDto> getContactById(@PathVariable Long id) {
+        return ResponseEntity.ok(contactService.getContactByIdDto(id));
     }
 
     @PostMapping
-    public ResponseEntity<Contact> createContact(@RequestBody Contact contact) {
-        Contact createdContact = contactService.createContact(contact);
+    public ResponseEntity<ContactResponseDto> createContact(@RequestBody ContactRequestDto contact) {
+        ContactResponseDto createdContact = contactService.createContact(contact);
         return ResponseEntity.status(HttpStatus.CREATED).body(createdContact);
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Contact> updateContact(@PathVariable Long id, @RequestBody Contact contact) {
-        contact.setId(id);
-        Contact updatedContact = contactService.updateContact(id, contact);
+    public ResponseEntity<ContactResponseDto> updateContact(@PathVariable Long id, @RequestBody ContactRequestDto contact) {
+        ContactResponseDto updatedContact = contactService.updateContact(id, contact);
         return ResponseEntity.ok(updatedContact);
     }
 

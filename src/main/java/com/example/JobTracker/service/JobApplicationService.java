@@ -4,6 +4,8 @@ import com.example.JobTracker.domain.entity.ApplicationStatus;
 import com.example.JobTracker.domain.entity.Company;
 import com.example.JobTracker.domain.entity.Contact;
 import com.example.JobTracker.domain.entity.JobApplication;
+import com.example.JobTracker.dto.*;
+import com.example.JobTracker.mapper.JobApplicationMapper;
 import com.example.JobTracker.repository.JobApplicationRepository;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -17,16 +19,23 @@ public class JobApplicationService {
     private final JobApplicationRepository jobApplicationRepository;
     private final CompanyService companyService;
     private final ContactService contactService;
+    private final JobApplicationMapper jobApplicationMapper;
 
-    public JobApplicationService(JobApplicationRepository jobApplicationRepository, CompanyService companyService, ContactService contactService) {
+    public JobApplicationService(JobApplicationRepository jobApplicationRepository, CompanyService companyService, ContactService contactService, JobApplicationMapper jobApplicationMapper) {
         this.jobApplicationRepository = jobApplicationRepository;
         this.companyService = companyService;
         this.contactService = contactService;
+        this.jobApplicationMapper = jobApplicationMapper;
     }
 
     @Transactional(readOnly = true)
-    public List<JobApplication> getAllApplications() {
-        return jobApplicationRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt"));
+    public List<JobApplicationResponseDto> getAllApplications() {
+        return jobApplicationRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt")).stream().map(jobApplicationMapper::toDto).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public JobApplicationResponseDto getApplicationByIdDto(Long id) {
+        return jobApplicationMapper.toDto(getApplicationById(id));
     }
 
     @Transactional(readOnly = true)
@@ -35,61 +44,61 @@ public class JobApplicationService {
     }
 
     @Transactional(readOnly = true)
-    public List<JobApplication> getApplicationsByCompany(Long companyId){
-        return jobApplicationRepository.findByCompanyId(companyId);
+    public List<JobApplicationResponseDto> getApplicationsByCompany(Long companyId) {
+        return jobApplicationRepository.findByCompanyId(companyId).stream().map(jobApplicationMapper::toDto).toList();
     }
 
     @Transactional(readOnly = true)
-    public List<JobApplication> getApplicationsByStatus(ApplicationStatus applicationStatus) {
-        return jobApplicationRepository.findByStatus(applicationStatus);
+    public List<JobApplicationResponseDto> getApplicationsByStatus(ApplicationStatus applicationStatus) {
+        return jobApplicationRepository.findByStatus(applicationStatus).stream().map(jobApplicationMapper::toDto).toList();
     }
 
     @Transactional(readOnly = true)
-    public List<JobApplication> getOverdueFollowups() {
-        return jobApplicationRepository.findByFollowUpDateBefore(LocalDate.now());
+    public List<JobApplicationResponseDto> getOverdueFollowups() {
+        return jobApplicationRepository.findByFollowUpDateBefore(LocalDate.now()).stream().map(jobApplicationMapper::toDto).toList();
     }
 
     @Transactional
-    public JobApplication createApplication(JobApplication application) {
-        if (application.getCompany() == null || application.getCompany().getName() == null || application.getCompany().getName().trim().isEmpty()) {
+    public JobApplicationResponseDto createApplication(JobApplicationRequestDto application) {
+        if (application.companyName() == null || application.companyName().trim().isEmpty()) {
             throw new IllegalArgumentException("Job application must be associated with a valid company");
         }
 
-        Company resolvedCompany = companyService.createCompany(application.getCompany());
-        application.setCompany(resolvedCompany);
+        CompanyResponseDto resolvedCompanyDto = companyService.createCompany(new CompanyRequestDto(application.companyName()));
+        Company managedCompany = companyService.getCompanyById(resolvedCompanyDto.id());
+        JobApplication newJobApplication = jobApplicationMapper.fromDto(application);
+        newJobApplication.setCompany(managedCompany);
 
-        if (application.getReferredBy() != null) {
-            Contact referralContact = application.getReferredBy();
-            if (referralContact.getId() != null) {
-                Contact existingContact = contactService.getContactById(referralContact.getId());
-                application.setReferredBy(existingContact);
-            } else if (referralContact.getName() != null && !referralContact.getName().trim().isEmpty()) {
-                referralContact.setCompany(resolvedCompany);
-                Contact newContact = contactService.createContact(referralContact);
-                application.setReferredBy(newContact);
+        if (application.referredById() != null || (application.referredByName() != null && !application.referredByName().trim().isEmpty())) {
+            if (application.referredById() != null) {
+                Contact existingContact = contactService.getContactById(application.referredById());
+                newJobApplication.setReferredBy(existingContact);
+            } else {
+                ContactResponseDto newContact = contactService.createContact(new ContactRequestDto(application.referredByName(), managedCompany.getName()));
+                Contact managedContact = contactService.getContactById(newContact.id());
+                newJobApplication.setReferredBy(managedContact);
             }
-        } else if (application.isReferral()) {
+        } else if (application.referral()) {
             throw new RuntimeException("A referral application must have a contact");
         }
 
-        if (application.getRecruiter() != null) {
-            Contact recruiterDetails = application.getRecruiter();
-            if (recruiterDetails.getId() != null) {
-                Contact existingRecruiter = contactService.getContactById(recruiterDetails.getId());
-                application.setRecruiter(existingRecruiter);
-            } else if (recruiterDetails.getName() != null && !recruiterDetails.getName().trim().isEmpty()) {
-                recruiterDetails.setCompany(resolvedCompany);
-                Contact newRecruiter = contactService.createContact(recruiterDetails);
-                application.setRecruiter(newRecruiter);
+        if (application.recruiterId() != null || (application.recruiterName() != null && !application.recruiterName().trim().isEmpty())) {
+            if (application.recruiterId() != null) {
+                Contact existingRecruiter = contactService.getContactById(application.recruiterId());
+                newJobApplication.setRecruiter(existingRecruiter);
+            } else {
+                ContactResponseDto newRecruiter = contactService.createContact(new ContactRequestDto(application.recruiterName(), managedCompany.getName()));
+                Contact recruiter = contactService.getContactById(newRecruiter.id());
+                newJobApplication.setRecruiter(recruiter);
             }
         } else {
-            application.setRecruiter(null);
+            newJobApplication.setRecruiter(null);
         }
 
-        if (application.getStatus() == null) {
-            application.setStatus(ApplicationStatus.APPLIED);
+        if (application.status() == null) {
+            newJobApplication.setStatus(ApplicationStatus.APPLIED);
         }
-        return jobApplicationRepository.save(application);
+        return jobApplicationMapper.toDto(jobApplicationRepository.save(newJobApplication));
     }
 
     @Transactional
@@ -100,48 +109,46 @@ public class JobApplicationService {
     }
 
     @Transactional
-    public JobApplication updateApplication(Long id, JobApplication updatedApplication) {
+    public JobApplicationResponseDto updateApplication(Long id, JobApplicationRequestDto updatedApplication) {
         JobApplication existing = getApplicationById(id);
-        existing.setJobTitle(updatedApplication.getJobTitle());
-        existing.setStatus(updatedApplication.getStatus());
-        existing.setNotes(updatedApplication.getNotes());
-        existing.setSource(updatedApplication.getSource());
-        existing.setFollowUpDate(updatedApplication.getFollowUpDate());
-        existing.setExpectedSalary(updatedApplication.getExpectedSalary());
-        existing.setOfferedSalary(updatedApplication.getOfferedSalary());
-        existing.setCurrency(updatedApplication.getCurrency());
-        existing.setReferral(updatedApplication.isReferral());
-        if (updatedApplication.getCompany() != null && updatedApplication.getCompany().getName() != null && !updatedApplication.getCompany().getName().trim().isEmpty()) {
-            Company resolvedCompany = companyService.createCompany(updatedApplication.getCompany());
-            existing.setCompany(resolvedCompany);
+        existing.setJobTitle(updatedApplication.jobTitle());
+        existing.setStatus(updatedApplication.status());
+        existing.setNotes(updatedApplication.notes());
+        existing.setSource(updatedApplication.source());
+        existing.setFollowUpDate(updatedApplication.followUpDate());
+        existing.setExpectedSalary(updatedApplication.expectedSalary());
+        existing.setOfferedSalary(updatedApplication.offeredSalary());
+        existing.setCurrency(updatedApplication.currency());
+        existing.setReferral(updatedApplication.referral());
+        if (updatedApplication.companyId() != null || (updatedApplication.companyName() != null && !updatedApplication.companyName().trim().isEmpty())) {
+            CompanyResponseDto resolvedCompany = companyService.createCompany(new CompanyRequestDto(updatedApplication.companyName().trim()));
+            Company managedCompany = companyService.getCompanyById(resolvedCompany.id());
+            existing.setCompany(managedCompany);
         }
         Company targetCompany = existing.getCompany();
-        if (updatedApplication.getReferredBy() != null) {
-            Contact referrerDetails = updatedApplication.getReferredBy();
-            if (referrerDetails.getId() != null) {
-                Contact existingContact = contactService.getContactById(referrerDetails.getId());
+        if (updatedApplication.referredById() != null || (updatedApplication.referredByName() != null && !updatedApplication.referredByName().trim().isEmpty())) {
+            if (updatedApplication.referredById() != null) {
+                Contact existingContact = contactService.getContactById(updatedApplication.referredById());
                 existing.setReferredBy(existingContact);
-            } else if (referrerDetails.getName() != null && !referrerDetails.getName().trim().isEmpty()) {
-                referrerDetails.setCompany(targetCompany);
-                existing.setReferredBy(contactService.createContact(referrerDetails));
+            } else {
+                ContactResponseDto referrer = contactService.createContact(new ContactRequestDto(updatedApplication.referredByName(), targetCompany.getName()));
+                existing.setReferredBy(contactService.getContactById(referrer.id()));
             }
         } else {
             existing.setReferredBy(null);
         }
-        if (updatedApplication.getRecruiter() != null) {
-            Contact recruiterDetails = updatedApplication.getRecruiter();
-            if (recruiterDetails.getId() != null) {
-                Contact existingRecruiter = contactService.getContactById(recruiterDetails.getId());
+        if (updatedApplication.recruiterId() != null || (updatedApplication.recruiterName() != null && !updatedApplication.recruiterName().trim().isEmpty())) {
+            if (updatedApplication.recruiterId() != null) {
+                Contact existingRecruiter = contactService.getContactById(updatedApplication.recruiterId());
                 existing.setRecruiter(existingRecruiter);
-            } else if (recruiterDetails.getName() != null && !recruiterDetails.getName().trim().isEmpty()) {
-                recruiterDetails.setCompany(targetCompany);
-                Contact newRecruiter = contactService.createContact(recruiterDetails);
-                existing.setRecruiter(newRecruiter);
+            } else {
+                ContactResponseDto newRecruiter = contactService.createContact(new ContactRequestDto(updatedApplication.recruiterName(), targetCompany.getName()));
+                existing.setRecruiter(contactService.getContactById(newRecruiter.id()));
             }
         } else {
             existing.setRecruiter(null);
         }
-        return jobApplicationRepository.save(existing);
+        return jobApplicationMapper.toDto(jobApplicationRepository.save(existing));
     }
 
     @Transactional
